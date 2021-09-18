@@ -2,8 +2,6 @@ package.cpath = package.cpath .. ";/home/f1/dev/cl/lua/me-plug/codelibrary/luv/?
 vim = require("shared")
 vim.loop = require("luv")
 local uv = require("luv")
---local async = dofile("/home/f1/.local/share/nvim/site/pack/packer/start/plenary.nvim/lua/plenary/async/init.lua")
---local Path = dofile("/home/f1/.local/share/nvim/site/pack/packer/start/plenary.nvim/lua/plenary/path.lua")
 
 local Path = require("plenary.path")
 local json = loadfile("./json.lua")
@@ -12,7 +10,6 @@ local inspect = require("inspect")
 local dump = function(t)
   print(inspect(t))
 end
---print(async, Path, utils, vim, inspect, inspect(vim.loop))
 
 local path_to_this_file = os.getenv("PWD") .. "/" .. debug.getinfo(1).short_src
 local root = path_to_this_file:match("^(.*)/.*$")
@@ -26,12 +23,10 @@ local colors = dofile(root .. "/ansicolors.lua")
 local function get_fs()
   local scan = require("plenary.scandir")
   local fs_orig = {}
-  -- root level scan
   scan.scan_dir(root .. "/repos", {
     only_dirs = true,
     depth = 1,
     on_insert = function(dir)
-      --local sub_root = dir:match"^(.*)/.*$"
 
       scan.scan_dir(dir, {
         only_dirs = true,
@@ -45,7 +40,6 @@ local function get_fs()
   return fs_orig
 end
 
--- sub_dir, user_repo, group, type
 local function get_repos()
   local all_repos_in_file = {}
   for group, v in pairs(repos) do
@@ -97,8 +91,6 @@ local function get_repos()
         repo.sub_dir = ("%s/%s"):format(group, repo.alt_name or url_orig:match("^.*/(.*)$"))
         repo.url = url_orig:gsub("/tree/master/", "/trunk/")
 
-        --table.insert(repo.args, nix_svn)
-        --table.insert(repo.args, "checkout")
         local svn_arg = ("%s checkout %s"):format(nix_svn, repo.url)
         if repo.alt_name then
           svn_arg = svn_arg .. " " .. repo.alt_name
@@ -112,19 +104,12 @@ local function get_repos()
       if not is_partial then
         repo.partial = false
         repo.sub_dir = ("%s/%s"):format(group, repo.alt_name or repo.user_name:match("/(.*)$"))
-        --table.insert(repo.args, nix_git)
-        --table.insert(repo.args, "clone")
         local git_arg = ("%s clone %s"):format(nix_git, repo.url)
         if repo.alt_name then
           git_arg = git_arg .. " " .. repo.alt_name
         end
         table.insert(repo.args, git_arg)
       end
-
-      -- table.insert(repo.args, repo.url)
-      -- if repo.alt_name then
-      --   table.insert(repo.args, repo.alt_name)
-      -- end
 
       table.insert(all_repos_in_file, repo)
     end
@@ -139,19 +124,40 @@ local function compare(fs_orig, repo_orig)
   local repo_orig = vim.deepcopy(repo_orig)
 
   local exists_in_both = {}
+  local not_in_file = {}
+  local not_in_fs = {}
 
   for i, file_repo in ipairs(repo_orig) do
+    local found = false
     for j, fs_repo in ipairs(fs_orig) do
-      --print(file_repo[1], fs_repo[1], type(file_repo[1]), type(fs_repo[1]))
+      --print(file_repo.sub_dir, fs_repo.sub_dir)
+
       if file_repo.sub_dir == fs_repo.sub_dir then
-        table.insert(exists_in_both, table.remove(repo_orig, i))
-        table.remove(fs_orig, j)
+        table.insert(exists_in_both, repo_orig[i])
+        --print("FOUND: " .. file_repo.sub_dir .. ": Adding to exists_in_both:")
+        found = true
+        break
       end
+    end
+    if not found then
+      table.insert(not_in_fs, repo_orig[i])
     end
   end
 
-  local not_in_file = fs_orig
-  local not_in_fs = repo_orig
+  -- work out not_in_file
+  for i, fs_repo in ipairs(fs_orig) do
+    local found = false
+    for j, file_repo in ipairs(repo_orig) do
+
+      if file_repo.sub_dir == fs_repo.sub_dir then
+        found = true
+        break
+      end
+    end
+    if not found then
+      table.insert(not_in_file, fs_orig[i])
+    end
+  end
 
   -- print it
   for _, repo in ipairs(exists_in_both) do
@@ -180,9 +186,9 @@ local function download_prepare()
   local roots_to_check = {}
 
   for _, repo in ipairs(not_in_fs) do
-    local fp = root .. "/repos/" .. repo.sub_dir
+    local fp = root .. "/repos/" .. repo.group
     if uv.fs_stat(fp) == nil then
-      print('doesnt exist')
+      print("doesnt exist")
       print(fp)
       uv.fs_mkdir(fp, mode)
     end
@@ -202,7 +208,6 @@ local function download_single_repo(opts)
     local error_messages = {}
     handle, pid = uv.spawn(opts.cmd, {
       cwd = opts.cwd,
-      --args = { "-c", [[echo "hello world"]] },
       args = opts.args,
       env = opts.env,
       stdio = { _, stdout, stderr },
@@ -228,7 +233,7 @@ local function download_single_repo(opts)
     uv.read_start(stdout, function(err, data)
       assert(not err, err)
       if data then
-        print("stdout chunk", stdout, data)
+        print(data)
       end
     end)
 
@@ -239,7 +244,6 @@ local function download_single_repo(opts)
       end
     end)
 
-    print(handle)
     return handle
   end
 end
@@ -247,7 +251,6 @@ end
 --- download not_in_fs
 download_prepare()
 
-dump(not_in_fs)
 for _, repo in ipairs(not_in_fs) do
   local opts = {
     repo = repo,
@@ -256,16 +259,14 @@ for _, repo in ipairs(not_in_fs) do
     env = {
       "GIT_TERMINAL_PROMPT=0",
     },
-    cwd = root .. "/repos/" .. repo.sub_dir,
+    cwd = root .. "/repos/" .. repo.group,
   }
-
   table.insert(tasks, download_single_repo(opts))
 end
 
 for _, fn in ipairs(tasks) do
   fn()
 end
---while task_amount ~= completed_tasks do print('uv.run ~= 1') end
 repeat
 until uv.run() == false
 
