@@ -21,7 +21,7 @@ local dump = function(t) print(inspect(t)) end
 local path_to_this_file = os.getenv("PWD") .. '/'.. debug.getinfo(1).short_src
 local root = path_to_this_file:match"^(.*)/.*$"
 local repos = dofile(root .. "/repos.lua")
-
+local home = os.getenv("HOME") 
 local colors = dofile(root .. "/ansicolors.lua")
 
 local function get_fs()
@@ -146,23 +146,27 @@ local stderr = uv.new_pipe()
 local handle
 handle, pid = uv.spawn(opts.cmd, {
   cwd = opts.cwd,
+  --args = { "-c", [[echo "hello world"]] },
   args = opts.args,
+  env = opts.env,
   stdio = {_, stdout, stderr}
 }, function(code, signal) -- on exit
-  print("EXITING: " .. opts.cmd .. " " .. inspect(opts.args) .. " -- " .. opts.cwd)
+print('----- START EXIT ----')
+ dump(opts)
+ print("EXITING: " .. opts.cmd .. " " .. inspect(opts.args) .. " -- " .. opts.cwd)
   print("exit code", code)
   print("exit signal", signal)
   completed_tasks = completed_tasks + 1
   uv.close(handle)
+  print('----- END EXIT -----')
 end)
-print(handle, pid)
 
 uv.read_start(stdout, function(err, data)
   assert(not err, err)
   if data then
     print("stdout chunk", stdout, data)
   else
-    print("stdout end", stdout)
+    --print("stdout end", stdout)
   end
 end)
 
@@ -171,11 +175,12 @@ uv.read_start(stderr, function(err, data)
   if data then
     print("stderr chunk", stderr, data)
   else
-    print("stderr end", stderr)
+    --print("stderr end", stderr)
   end
+
 end)
 
-
+print(handle)
 return handle
 end
 
@@ -196,15 +201,18 @@ local github = ("https://github.com/%s"):format(user_repo)
 local args
 if repo[5] then
 local alt_dirname = repo[5]
-args = {"clone", github, alt_dirname }
+args = {"-c", ([[%s/.nix-profile/bin/git clone %s %s]]):format(home, github, alt_dirname)}
 else
-args = {"clone", github }
+args = {"-c",  ([[%s/.nix-profile/bin/git clone %s]]):format(home, github)}
+
 end
 
-
 local opts = {
-cmd = "git",
+cmd = home .. "/.nix-profile/bin/zsh",
 args = args,
+env = {
+"GIT_TERMINAL_PROMPT=0"
+},
 cwd = root .. "/repos/" .. sub_dir
 }
 
@@ -212,7 +220,6 @@ table.insert(tasks, download_single_repo(opts))
 end
 
 for _, fn in ipairs(tasks) do fn() end
-
 --while task_amount ~= completed_tasks do print('uv.run ~= 1') end
 repeat
 until uv.run() == false

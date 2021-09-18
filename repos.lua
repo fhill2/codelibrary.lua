@@ -9,6 +9,6 @@ shell = {
 --{"asdasdasd/tui_snippetsorz", "tui_snippets"}
 },
 ["shell-category"] = {
-"fhill2/asd.lua"
+"fhill2/floating.nvim"
 }
 }
