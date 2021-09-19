@@ -1,20 +1,17 @@
-package.cpath = package.cpath .. ";/home/f1/dev/cl/lua/me-plug/codelibrary/luv/?.so"
+local path_to_this_file = os.getenv("PWD") .. "/" .. debug.getinfo(1).short_src
+local root = path_to_this_file:match("^(.*)/.*$")
+package.cpath = package.cpath .. ";" .. root .. "/luv/?.so"
 vim = require("shared")
 vim.loop = require("luv")
 local uv = require("luv")
 
-local Path = require("plenary.path")
-local json = loadfile("./json.lua")
-local utils = require("futil/utils")
 local inspect = require("inspect")
 local dump = function(t)
   print(inspect(t))
 end
 
-local path_to_this_file = os.getenv("PWD") .. "/" .. debug.getinfo(1).short_src
-local root = path_to_this_file:match("^(.*)/.*$")
 local repos = dofile(root .. "/repos.lua")
-local home = os.getenv("HOME")
+local home = uv.os_homedir()
 local nix_zsh = ("%s/.nix-profile/bin/zsh"):format(home)
 local nix_git = ("%s/.nix-profile/bin/git"):format(home)
 local nix_svn = ("%s/.nix-profile/bin/svn"):format(home)
@@ -188,8 +185,6 @@ local function download_prepare()
   for _, repo in ipairs(not_in_fs) do
     local fp = root .. "/repos/" .. repo.group
     if uv.fs_stat(fp) == nil then
-      print("doesnt exist")
-      print(fp)
       uv.fs_mkdir(fp, mode)
     end
   end
