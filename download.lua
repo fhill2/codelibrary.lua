@@ -1,26 +1,17 @@
-local path_to_this_file = os.getenv("PWD") .. "/" .. debug.getinfo(1).short_src
-local root = path_to_this_file:match("^(.*)/.*$")
-package.cpath = package.cpath .. ";" .. root .. "/luv/?.so"
-vim = require("shared")
-vim.loop = require("luv")
-local uv = require("luv")
-
-local inspect = require("inspect")
-local dump = function(t)
-  print(inspect(t))
-end
-
-local repos = dofile(root .. "/repos.lua")
-local home = uv.os_homedir()
+local repos = require"codelibrary.data.repos"
 local nix_zsh = ("%s/.nix-profile/bin/zsh"):format(home)
 local nix_git = ("%s/.nix-profile/bin/git"):format(home)
 local nix_svn = ("%s/.nix-profile/bin/svn"):format(home)
-local colors = dofile(root .. "/ansicolors.lua")
+local util = require"codelibrary.util"
+
+local colors = require"lib.ansicolors"
+local ln = require"codelibrary.ln".ln
+util.mkdir(home .. repos.config.destination)
 
 local function get_fs()
   local scan = require("plenary.scandir")
   local fs_orig = {}
-  scan.scan_dir(root .. "/repos", {
+  scan.scan_dir(home .. repos.config.destination, {
     only_dirs = true,
     depth = 1,
     on_insert = function(dir)
@@ -39,8 +30,17 @@ end
 
 local function get_repos()
   local all_repos_in_file = {}
-  for group, v in pairs(repos) do
-    for _, vv in ipairs(v) do
+  for group, v in pairs(repos.repos) do
+
+
+    local reldest
+    if not v[2] then 
+      print(colors("%{bright red}group is missing destination: " .. group))
+      os.exit()
+       else
+    reldest = v[2]
+       end
+    for _, vv in ipairs(v[1]) do
       local repo = {
         -- url final URL that goes to git clone command
         -- user_name DONE
@@ -50,8 +50,13 @@ local function get_repos()
         -- sub_dir - auto generated from user_name and alt_name DONE
         -- partial -- download a folder within a git repo true/false DONE
         -- partial_path NOT DONE
+        -- dest <-- download repo location
+        -- sym_dest <-- after downloaded to dest, dest gets symlinked to sym_dest
         args = { "-c" }, -- generated from url alt_name and partial
+        dest = dest,
       }
+
+
 
       local url_orig
       if type(vv) == "string" then
@@ -62,7 +67,8 @@ local function get_repos()
           repo.alt_name = vv[2]
         end
       end
-
+      
+      
       local is_github_url = url_orig:match("https://github.com")
       --local is_gitlab_url = url_orig:match("https://gitlab.com')
       local is_partial = url_orig:match("/tree/")
@@ -108,12 +114,14 @@ local function get_repos()
         table.insert(repo.args, git_arg)
       end
 
+      repo.dest = ("%s%s/%s"):format(home, repos.config.destination, repo.sub_dir)
+      repo.sym_dest = ("%s%s/%s"):format(home, repos.config.symlink_destination, reldest)
+
+
       table.insert(all_repos_in_file, repo)
     end
   end
-
   return all_repos_in_file
-  --os.exit()
 end
 
 local function compare(fs_orig, repo_orig)
@@ -166,7 +174,7 @@ local function compare(fs_orig, repo_orig)
   end
 
   for _, repo in ipairs(not_in_file) do
-    print(colors("%{bright yellow}" .. "file:" .. repo.sub_dir .. " <----- fs:" .. repo.sub_dir .. " [Doing Nothing]"))
+    print(colors("%{bright yellow}" .. "file:" .. repo.sub_dir .. " <----- fs:" .. repo.sub_dir .. " [Deleting]"))
   end
 
   return exists_in_both, not_in_file, not_in_fs
@@ -175,18 +183,21 @@ end
 local fs_orig = get_fs()
 local repo_orig = get_repos()
 local exists_in_both, not_in_file, not_in_fs = compare(fs_orig, repo_orig)
---os.exit()
+
+
+local function cleanup()
+for _, repo in ipairs(not_in_file) do
+util.remove_dir(repo.dest)
+end
+end
 
 local function download_prepare()
-  local mode = uv.fs_stat(root).mode
-  -- make sure all roots from file exist on fs before downloading
+   -- make sure all roots from file exist on fs before downloading
   local roots_to_check = {}
-
+ 
+  -- check dl_location - if all folders are made
   for _, repo in ipairs(not_in_fs) do
-    local fp = root .. "/repos/" .. repo.group
-    if uv.fs_stat(fp) == nil then
-      uv.fs_mkdir(fp, mode)
-    end
+    util.create_fp_dirs(repo.dest)
   end
 end
 
@@ -228,7 +239,7 @@ local function download_single_repo(opts)
     uv.read_start(stdout, function(err, data)
       assert(not err, err)
       if data then
-        print(data)
+        --print(data)
       end
     end)
 
@@ -243,10 +254,18 @@ local function download_single_repo(opts)
   end
 end
 
+
+
+-- START SCRIPT
+--os.exit()
+
 --- download not_in_fs
+cleanup()
 download_prepare()
 
 for _, repo in ipairs(not_in_fs) do
+local cwd = ("%s%s/%s"):format(home, repos.config.destination, repo.group)
+print(cwd)
   local opts = {
     repo = repo,
     cmd = nix_zsh,
@@ -254,7 +273,7 @@ for _, repo in ipairs(not_in_fs) do
     env = {
       "GIT_TERMINAL_PROMPT=0",
     },
-    cwd = root .. "/repos/" .. repo.group,
+    cwd = cwd,
   }
   table.insert(tasks, download_single_repo(opts))
 end
@@ -265,5 +284,9 @@ end
 repeat
 until uv.run() == false
 
---print("done")
---print(completed_tasks)
+print(" ===== FINISHED DOWNLOADER =====")
+print("Symlinking...")
+
+for _, repo in ipairs(repo_orig) do
+ln(repo.dest, repo.sym_dest)
+end
